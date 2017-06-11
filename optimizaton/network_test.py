@@ -22,7 +22,7 @@ x = T.dmatrix('x')
 n_epochs = 5 
 
 # Number of hidden nodes
-n_hidden = 50
+n_hidden = 500
 
 def sgd(cost, params, lr):
     gradients = T.grad(cost=cost, wrt=params)
@@ -34,27 +34,27 @@ def softmax(X):
 
 # Layer 1
 l1_dim = (n_features, n_hidden)
-w1 = theano.shared(rng.normal(loc=1.0, size=l1_dim), name='w1')
-b1 = theano.shared(rng.normal(size=(n_hidden)), name='b1')
+w1 = theano.shared(rng.normal(size=l1_dim), name='w1', borrow=True)
+b1 = theano.shared(1., name='b1', borrow=True)
 lf1 = T.nnet.relu(T.dot(x, w1) + b1)
 
 # Layer 2
 l2_dim = (n_hidden, n_hidden)
-w2 = theano.shared(rng.normal(loc=1.0, size=l2_dim), name='w2')
-b2 = theano.shared(rng.normal(size=(n_hidden)), name='b2')
+w2 = theano.shared(rng.normal(size=l2_dim), name='w2', borrow=True)
+b2 = theano.shared(1., name='b2', borrow=True)
 lf2 = T.nnet.relu(T.dot(lf1, w2) + b2)
 
 # Layer 3
-l3_dim = (n_hidden, n_hidden)
-w3 = theano.shared(rng.normal(loc=1.0, size=l3_dim), name='w3')
-b3 = theano.shared(rng.normal(size=(n_hidden)), name='b3')
-lf3 = T.nnet.relu(T.dot(lf2, w3) + b3)
+# l3_dim = (n_hidden, n_hidden)
+# w3 = theano.shared(rng.normal(size=l3_dim), name='w3', borrow=True)
+# b3 = theano.shared(1., name='b3', borrow=True)
+# lf3 = T.nnet.relu(T.dot(lf2, w3) + b3)
 
 # Output layer
 o_dim = (n_hidden, 10)
-w4 = theano.shared(rng.normal(loc=1.0, size=o_dim), name='w4')
-b4 = theano.shared(rng.normal(size=(10)), name='b4')
-output = softmax(T.dot(lf3, w4) + b4)
+w4 = theano.shared(rng.normal(size=o_dim), name='w4', borrow=True)
+b4 = theano.shared(1., name='b4', borrow=True)
+output = softmax(T.dot(lf2, w4) + b4)
 prediction = T.argmax(output, axis=1)
 loss = T.mean(T.nnet.categorical_crossentropy(output, y))
 
@@ -63,11 +63,10 @@ loss = T.mean(T.nnet.categorical_crossentropy(output, y))
 alpha = theano.shared(0.01, name='alpha')
 alpha_orig = theano.shared(0.01, name='alpha_orig')
 t = theano.shared(1, name='t')
-params = [w1, b1, w2, b2, w3, b3, w4, b4]
+params = [w1, b1, w2, b2, w4, b4]
 
 # Gradient descent
-param_updates = [(a, a - alpha * T.grad(cost=loss, wrt=a)) for a in [w1, b1, w2, b2, w3,
-    b3, w4, b4]]
+param_updates = [(a, a - alpha * T.grad(cost=loss, wrt=a)) for a in params]
 
 # Update learning rate
 param_updates.append((alpha, alpha_orig / np.sqrt(t)))
@@ -76,7 +75,7 @@ param_updates.append((alpha_orig, alpha_orig))
 
 obj_fn = theano.function(inputs=[x, y],
                          outputs=loss,
-                         updates=param_updates,
+                         updates=sgd(loss, params, 0.001),
                          allow_input_downcast=True)
 
 pred_fn = theano.function(inputs=[x],
@@ -90,23 +89,14 @@ log_interval = len(train_y) / batch_size / 10
 test_err = []
 iter_num = []
 i_num = 0
-get_test_error()
 for i in range(n_epochs):
     count = 0
     for (start, end) in zip(range(0, len(train_y) - batch_size, batch_size),
             range(batch_size, len(train_y), batch_size)):
         cost = obj_fn(train_X[start:end,:],
                 train_y[start:end])
-        if count % log_interval == 0:
-            print("alpha: {}".format(alpha.get_value()))
-            print("Cost at iteration {} epoch {} is {}".format(
-                t.get_value(), i, cost))
-            test_err.append(cost)
-            iter_num.append(i_num)
-            i_num += 1
-        count += 1
-    print("Test loss: {}".format(np.mean(test_y ==
+    print("Epoc {} test accuracy: {}".format(i, np.mean(test_y ==
         np.argmax(pred_fn(test_X), axis=0))))
 
-plt.plot(iter_num, test_err)
-plt.savefig("training_error.png", dpi=700)
+#plt.plot(iter_num, test_err)
+#plt.savefig("training_error.png", dpi=700)
