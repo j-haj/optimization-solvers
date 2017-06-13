@@ -19,6 +19,63 @@ n_features = 784
 y = T.ivector('y')
 x = T.dmatrix('x')
 
+class Layer(object):
+    """
+    Creates network layers with specified shape and activation function.
+
+    A layer consists of a specified number of nodes, a speified input size, and
+    a specified output size. Each node has a set of weights and constant offset,
+    along with an activation function.
+    """
+
+    def __init__(self, input_dim, output_dim, n_nodes, activation=T.nnet.relu,
+                 weight_init_scale=0.01):
+        """
+        Constructor
+
+        Params:
+            input_dim (int): dimension of layer input
+            output_dim (int): dimension of layer output
+            n_nodes (int): number of nodes in the layer
+            activation: activation function used for the nodes
+            weight_init_scale: scale factor for random weight initialization.
+                               Default value is 0.01
+        """
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.weight_init_scale_ = weight_init_scale
+        self.activation = activation
+
+        self.W = theano.shared(value=rng.normal(size=(input_dim, output_dim),
+                                                scale=self.weight_init_scale_),
+                              borrow=True)
+        self.b = theano.shared(value=self.weight_init_scale_, borrow=True)
+
+    def eval(self, x):
+        """
+        Evaluates the layer.
+
+        Layer evaluation is based on the formulat
+
+            activation(<w.T, x> + b)
+
+        Params:
+            x: input tensor to be run through the layer
+
+        Returns:
+            Result of activation function
+        """
+        return self.activation(T.dot(w.T, x) + b)
+
+    def params(self):
+        """
+        Returns the Theano parameters as a list
+
+        Returns:
+            List containing W and b
+        """
+        return [self.W, self.b]
+
 n_epochs = 10
 
 # Number of hidden nodes
