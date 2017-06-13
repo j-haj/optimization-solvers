@@ -28,7 +28,7 @@ class Layer(object):
     along with an activation function.
     """
 
-    def __init__(self, input_dim, output_dim, n_nodes, activation=T.nnet.relu,
+    def __init__(self, input_dim, output_dim, activation=T.nnet.relu,
                  weight_init_scale=0.01):
         """
         Constructor
@@ -75,6 +75,88 @@ class Layer(object):
             List containing W and b
         """
         return [self.W, self.b]
+
+class NeuralNetwork(object):
+    """
+    Represents a neural network model through the use of layer composition.
+
+    Neural Networks are composed via composition of layers and specifying a
+    solver.
+    """
+
+    def __init__(self, loss=T.nnet.categorical_crossentropy, solver=None):
+        """
+        Constructor
+
+        Params:
+            loss: loss function (Default is categorical crossentropy)
+            solver: solver used to train the network
+        """
+        self.loss_ = loss
+        self.solver_ = solver
+        self.layers = []
+        self.params = []
+
+
+    def add_layer(self, input_dim, output_dim, activation=T.nnet.relu,
+                  weight_init_scale=.01):
+        """
+        Creates a `Layer` object and adds it to the network
+
+        Params:
+            input_dim: dimension of the layer input
+            output_dim: dimension of the layer output
+            activation: activation function. Default value is ReLU
+            weight_init_scale: scale used in initializing layer weights. Default
+                                is 0.01
+
+        Returns:
+            This method returns `self` to allow for the fluent style of method
+            chaining.
+        """
+        # Check layer compaitability
+        if len(self.layers) != 0:
+            if self.layers[-1].output_dim != input_dim:
+                raise ValueError(("Dimension mismatch - input dimension of"
+                "current layer must match output dimension of prior layer"))
+
+        # Create layer object
+        self.layers.append(Layer(input_dim, output_dim, activation,
+            weight_init_scale))
+        self.params += self.layers[-1].params
+
+        return self
+
+    def train(self, x, y):
+        """
+        Trains the network on batch of data `x` and `y`
+
+        This method will most likely be called multiple times over several
+        mini-batches of data for each epoch. It is not meant to be called on the
+        entire dataset, although it can if that is how the user sets up their
+        mini-batches.
+
+        Params:
+            x: feature data
+            y: label data
+
+        Returns:
+            Training loss
+        """
+        pass
+
+    def predict(self, x):
+        """
+        Runs the model and returns the output
+
+        Params:
+            x: feature data used in the prediction
+
+        Returns:
+            If f is a function representing the neural network, this method
+            returns f(x), where `x` is the input
+        """
+        pass
 
 n_epochs = 10
 
