@@ -2,7 +2,7 @@ import numpy as np
 import theano
 import matplotlib.pyplot as plt
 import theano.tensor as T
-
+from enum import Enum
 from sklearn.datasets import fetch_mldata
 rng = np.random
 
@@ -28,25 +28,24 @@ class Layer(object):
     along with an activation function.
     """
 
-    def __init__(self, input_dim, output_dim, activation=T.nnet.relu,
+    def __init__(self, dim, activation=T.nnet.relu,
                  weight_init_scale=0.01):
         """
         Constructor
 
         Params:
-            input_dim (int): dimension of layer input
-            output_dim (int): dimension of layer output
+            dim : tuple representing the input and output dimensions
+                  (respectively) of the layer
             n_nodes (int): number of nodes in the layer
             activation: activation function used for the nodes
             weight_init_scale: scale factor for random weight initialization.
                                Default value is 0.01
         """
-        self.input_dim = input_dim
-        self.output_dim = output_dim
+        self.dim = dim
         self.weight_init_scale_ = weight_init_scale
         self.activation = activation
 
-        self.W = theano.shared(value=rng.normal(size=(input_dim, output_dim),
+        self.W = theano.shared(value=rng.normal(size=dim),
                                                 scale=self.weight_init_scale_),
                               borrow=True)
         self.b = theano.shared(value=self.weight_init_scale_, borrow=True)
@@ -84,7 +83,11 @@ class NeuralNetwork(object):
     solver.
     """
 
-    def __init__(self, loss=T.nnet.categorical_crossentropy, solver=None):
+    class Optimizer(Enum):
+        SGD = "SGD"
+        LBFGS = "L-BFGS"
+
+    def __init__(self, loss=T.nnet.categorical_crossentropy, optimizer=None):
         """
         Constructor
 
@@ -93,19 +96,18 @@ class NeuralNetwork(object):
             solver: solver used to train the network
         """
         self.loss_ = loss
-        self.solver_ = solver
+        self.optimizer_ = optimizer
         self.layers = []
         self.params = []
 
 
-    def add_layer(self, input_dim, output_dim, activation=T.nnet.relu,
+    def add_layer(self, dim, activation=T.nnet.relu,
                   weight_init_scale=.01):
         """
         Creates a `Layer` object and adds it to the network
 
         Params:
-            input_dim: dimension of the layer input
-            output_dim: dimension of the layer output
+            dim: tuple representing the input and output dimensions of the layer 
             activation: activation function. Default value is ReLU
             weight_init_scale: scale used in initializing layer weights. Default
                                 is 0.01
@@ -126,6 +128,45 @@ class NeuralNetwork(object):
         self.params += self.layers[-1].params
 
         return self
+
+    def compile(self):
+        """
+        Creates a Theano function object to store the model definition
+        """
+        if len(self.layers) == 0:
+            raise RuntimeError("Cannot compile model with 0 layers")
+        y = T.ivector()
+        x = T.dmatrix()
+
+        num_layers = len(self.layers)
+        first_layer = self.layers[0]
+        cur_layer = first_layer.activation(T.dot(first_layer.W.T, x) +
+                first_layer.b)
+        layer_output = x
+        for l in self.layers:
+            layer_output = l.activation(T.dot(l.W.T, layer_output) + l.b)
+        model_out = T.mean(self.loss_(layer_output, y))
+
+        return function(inputs=[x, y], outputs=model_out, updates=self.solver_,
+                        allow_input_downcast=True)
+
+    def deep_copy(self):
+        """
+        Creates a deep copy of the model.
+
+        Returns:
+            A new Neural Network object, identical to the model being copied,
+            but with separate parameters and independently compiled
+        """
+        copied_model = NeuralNetwork()
+        copied_model.loss_ = self.loss_
+        copied_model.params = [theano.shared(value=l.get_value(), borrow=True) for l
+                in self.params]
+        copied_model.params = [Layer(l.dim, l.activation, l.weight_init_scale) for l
+                in self.layers]
+        copied_model.compile()
+
+        return copied_model
 
     def train(self, x, y):
         """
