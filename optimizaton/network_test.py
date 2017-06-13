@@ -4,20 +4,39 @@ import matplotlib.pyplot as plt
 import theano.tensor as T
 from enum import Enum
 from sklearn.datasets import fetch_mldata
+
 rng = np.random
 
-# Load data
-mnist = fetch_mldata("MNIST original")
-indices = list(range(70000))
-np.random.shuffle(indices)
-train_indices = indices[:60000]
-test_indices = indices[60000:]
-train_X, train_y = mnist.data[train_indices, :], mnist.target[train_indices]
-test_X, test_y = mnist.data[test_indices, :], mnist.target[test_indices]
-n_features = 784
+class Optimizer(Enum):
+    SGD = "SGD"
+    LBFGS = "L-BFGS"
 
-y = T.ivector('y')
-x = T.dmatrix('x')
+
+def load_mnist(shuffle=False):
+    """
+    Loads MNIST from the mldata repository
+
+    Key information:
+        * Number of features: 784
+        * Test data: 10,000 points (adjustable)
+
+    Params:
+        shuffle: flag used to determine whether the data should be shuffled or
+                 not prior to creating the test and training sets
+
+    Returns:
+        A tuple consisting of (train_X, train_y, test_X, test_y)
+    """
+    mnist = fetch_mldata("MNIST original")
+    indices = list(range(70000))
+    if shuffle:
+        np.random.shuffle(indices)
+    train_indices = indices[:60000]
+    test_indices = indices[60000:]
+    train_X, train_y = mnist.data[train_indices, :], mnist.target[train_indices]
+    test_X, test_y = mnist.data[test_indices, :], mnist.target[test_indices]
+    
+    return (train_X, train_y, test_X, test_y)
 
 class Layer(object):
     """
@@ -84,10 +103,6 @@ class NeuralNetwork(object):
     solver.
     """
 
-    class Optimizer(Enum):
-        SGD = "SGD"
-        LBFGS = "L-BFGS"
-
     def __init__(self, loss=T.nnet.categorical_crossentropy, optimizer=None):
         """
         Constructor
@@ -100,7 +115,8 @@ class NeuralNetwork(object):
         self.optimizer_ = optimizer
         self.layers = []
         self.params = []
-
+        self.compiled_model_ = None
+        self.compiled_predictor_ = None
 
     def add_layer(self, dim, activation=T.nnet.relu,
                   weight_init_scale=.01):
@@ -175,9 +191,15 @@ class NeuralNetwork(object):
             layer_output = l.activation(T.dot(l.W.T, layer_output) + l.b)
         model_out = T.mean(self.loss_(layer_output, y))
 
-        return function(inputs=[x, y], outputs=model_out,
-                        updates=self.optimizer_(),
-                        allow_input_downcast=True)
+        self.compiled_model_ = theano.function(inputs=[x, y], 
+                                               outputs=model_out,
+                                               updates=self.optimizer_(),
+                                               allow_input_downcast=True)
+
+        self.compiled_predictor_ = theano.function(inputs=[x],
+                                                   outputs=T.argmax(layer_output,
+                                                                    axis=1)
+
 
     def deep_copy(self):
         """
@@ -213,7 +235,7 @@ class NeuralNetwork(object):
         Returns:
             Training loss
         """
-        pass
+        return self.compiled_model_(x, y)
 
     def predict(self, x):
         """
@@ -226,8 +248,36 @@ class NeuralNetwork(object):
             If f is a function representing the neural network, this method
             returns f(x), where `x` is the input
         """
-        pass
+        return self.compiled_predictor_(x)
 
+    def get_test_error(x, y):
+        """
+        Calculated the test error for the current model state
+
+        Params:
+            x: test feature data
+            y: test labels
+
+        Returns:
+            Percent incorrect on the test set
+        """
+        return np.mean(y == self.predict(x))
+
+    def get_test_accuracy(x, y):
+        """
+        Calculates the test accuracy for the current model state
+
+        Params:
+            x: test feature data
+            y: test label data
+
+        Returns:
+            Percent correct on the test set
+        """
+        return 1 - self.get_test_error(x, y)
+
+# TODO: Remove this as more updates are made
+'''
 n_epochs = 10
 
 # Number of hidden nodes
@@ -303,19 +353,37 @@ pred_fn = theano.function(inputs=[x],
 
 batch_size = 10
 log_interval = len(train_y) / batch_size / 10
+'''
 
-# Train network
-test_err = []
-iter_num = []
-i_num = 0
-for i in range(n_epochs):
-    count = 0
-    for (start, end) in zip(range(0, len(train_y) - batch_size, batch_size),
-            range(batch_size, len(train_y), batch_size)):
-        cost = obj_fn(train_X[start:end,:],
-                train_y[start:end])
-    
-    print("Epoc {} test accuracy: {}".format(i, np.mean(test_y == pred_fn(test_X))))
+if __name__ == "__main__":
 
-#plt.plot(iter_num, test_err)
-#plt.savefig("training_error.png", dpi=700)
+    n_hidden = 500
+
+    # Create neural network with SGD optimizer
+    nn = NeuralNetwork(optimizer=Optimizer.SGD)
+
+    # Build a three layer network
+    nn.add_layer(dim=(784, n_hidden)).\
+       add_layer(dim=(n_hidden, n_hidden)).\
+       add_layer(dim=(n_hidden, n_hidden),activation=T.nnet.softmax)
+
+    # Compile network
+    obj_fn = nn.compile()
+
+    # Train network
+    test_err = []
+    iter_num = []
+    i_num = 0
+    train_X, train_y, test_X, test_y = load_data()
+    for i in range(n_epochs):
+        count = 0
+        for (start, end) in zip(range(0, len(train_y) - batch_size, batch_size),
+                range(batch_size, len(train_y), batch_size)):
+            cost = nn.train(train_X[start:end,:],
+                    train_y[start:end])
+        
+        print("Epoc {} test accuracy: {}".format(i, nn.test_error(test_X,
+            test_y)))
+
+    #plt.plot(iter_num, test_err)
+    #plt.savefig("training_error.png", dpi=700)
