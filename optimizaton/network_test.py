@@ -35,27 +35,41 @@ def sgd(cost, params, lr, step):
 history_size = 5
 B = None
 prior_gradients = None
-def lbfgs(x, y, cost, params):
+def lbfgs(x, y, params, cost, B):
     """
     See https://en.wikipedia.org/wiki/Limited-memory_BFGS
     for details on this algorithm. Algorithm taken from this resource
     """
     # Perform warm start if t < history_size
     
-    gradients = T.grad(cost=cost, wrt=params)
-    if B = None:
-        B = theano.shared(value=np.identity(size=gradients.shape),
+    gradients = theano.gradient.jacobian(cost, wrt=params)
+    if B is None:
+        B = theano.shared(value=[np.identity(n=i.shape.eval()[0],
+            m=i.shape.eval()[1], dtype=float) for i in gradients],
                           name='B', borrow=True)
         prior_gradients = gradients
     # Get line search direction
     p = -T.dot(T.nlinalg.MatrixInverse(B), gradients)
 
     # Perform line search
-    costs = [obj_fn(x, y)
-    # Update parameters
+    step_size = 0.01
+    num_steps = 100
+    step_vals = [step_size * i for i in range(num_steps)]
+    obj_vals = []
+    for step in step_vals:
+        new_params = params.copy() + step * p
+        mod_obj = obj_fn.copy(swap={params: new_params})
+        obj_vals.append(mod_obj(x, y))
+    best_step = step_vals[obj_vals.index(min(obj_vals))]
+    sk = best_step * p
+    params = params + sk
+    yk = T.grad(cost=cost, wrt=params) - prior_gradient
+    B += T.dot(yk, yk.T) / T.dot(yk.T, sk) -\
+            T.dot(T.dot(B, sk), T.dot(sk.T, B))/\
+            T.dot(T.dot(sk.T, B), sk)
 
     # Update y and B
-    return updates
+    return params
 
 def softmax(X):
     e_x = T.exp(X - X.max(axis=1).dimshuffle(0, 'x'))
@@ -112,8 +126,8 @@ param_updates.append((alpha_orig, alpha_orig))
 
 obj_fn = theano.function(inputs=[x, y],
                          outputs=loss,
-                         updates=sgd(loss, params, alpha, t),
-			             #updates=param_updates,
+                         #updates=sgd(loss, params, alpha, t),
+			             updates=lbfgs(x, y, params, loss, B),
                          allow_input_downcast=True)
 
 pred_fn = theano.function(inputs=[x],
