@@ -75,6 +75,7 @@ class Layer(object):
         """
         return [self.W, self.b]
 
+
 class NeuralNetwork(object):
     """
     Represents a neural network model through the use of layer composition.
@@ -129,6 +130,33 @@ class NeuralNetwork(object):
 
         return self
 
+    def optimizer_(self):
+        """
+        Returns the updates list for the specified optimizer
+
+        Returns:
+            List of tuples specifying update rules for model
+        """
+        if self.optimizer_ == Optimizer.SGD:
+            # SGD
+            
+            # TODO: need a better way of allowing the user to pick the learning
+            # rate
+            alpha = theano.shared(value=0.01, borrow=True)
+            t = theano.shared(value=1, borrow=True)
+            updates = [(p, p - alpha * g) for (p, g) in zip(self.params,
+                gradients)]
+            updates.append((alpha, alpha * np.sqrt(t/(t + 1))))
+            updates.append((t, t + 1))
+            return updates
+        
+        elif self.optimizer_ == Optimizer.LBFGS:
+            # L-BFGS
+            pass
+        return None
+
+
+
     def compile(self):
         """
         Creates a Theano function object to store the model definition
@@ -147,7 +175,8 @@ class NeuralNetwork(object):
             layer_output = l.activation(T.dot(l.W.T, layer_output) + l.b)
         model_out = T.mean(self.loss_(layer_output, y))
 
-        return function(inputs=[x, y], outputs=model_out, updates=self.solver_,
+        return function(inputs=[x, y], outputs=model_out,
+                        updates=self.optimizer_(),
                         allow_input_downcast=True)
 
     def deep_copy(self):
@@ -257,52 +286,9 @@ def softmax(X):
 
 weight_scale = 0.01
 
-# Layer 1
-l1_dim = (n_features, n_hidden)
-w1 = theano.shared(value=rng.normal(size=l1_dim, scale=weight_scale),
-                   name='w1', borrow=True)
-b1 = theano.shared(value=weight_scale, name='b1', borrow=True)
-lf1 = T.nnet.relu(T.dot(x, w1) + b1)
 
-# Layer 2
-l2_dim = (n_hidden, n_hidden)
-w2 = theano.shared(value=rng.normal(size=l2_dim, scale=weight_scale),
-                   name='w2', borrow=True)
-b2 = theano.shared(value=weight_scale, name='b2', borrow=True)
-lf2 = T.nnet.relu(T.dot(lf1, w2) + b2)
-
-# Layer 3
-l3_dim = (n_hidden, n_hidden)
-w3 = theano.shared(value=rng.normal(size=l3_dim, scale=weight_scale),
-                   name='w3', borrow=True)
-b3 = theano.shared(value=weight_scale, name='b3', borrow=True)
-lf3 = T.nnet.relu(T.dot(lf2, w3) + b3)
-
-# Output layer
-o_dim = (n_hidden, 10)
-w4 = theano.shared(rng.normal(size=o_dim, scale=weight_scale),
-                   name='w4', borrow=True)
-b4 = theano.shared(value=weight_scale, name='b4', borrow=True)
-output = softmax(T.dot(lf3, w4) + b4)
 prediction = T.argmax(output, axis=1)
 loss = T.mean(T.nnet.categorical_crossentropy(output, y))
-
-# Update rules
-# Since we have a number
-alpha_val = 0.05
-alpha = theano.shared(value=alpha_val, name='alpha')
-alpha_orig = theano.shared(value=alpha_val, name='alpha_orig')
-t = theano.shared(value=1, name='t')
-params = [w1, b1, w2, b2, w3, b3, w4, b4]
-
-# Gradient descent
-param_updates = [(a, a - alpha * T.grad(cost=loss, wrt=a)) for a in params]
-
-# Update learning rate
-param_updates.append((alpha, alpha_orig / np.sqrt(t)))
-param_updates.append((t, t + 1))
-param_updates.append((alpha_orig, alpha_orig))
-
 
 obj_fn = theano.function(inputs=[x, y],
                          outputs=loss,
