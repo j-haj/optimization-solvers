@@ -31,6 +31,11 @@ def load_mnist(shuffle=False):
     indices = list(range(70000))
     if shuffle:
         np.random.shuffle(indices)
+    else:
+        tmp_x = indices[:60000]
+        tmp_y = indices[60000:]
+        np.random.shuffle(tmp_x)
+        indices = tmp_x + tmp_y
     train_indices = indices[:60000]
     test_indices = indices[60000:]
     train_X, train_y = mnist.data[train_indices, :], mnist.target[train_indices]
@@ -373,7 +378,7 @@ if __name__ == "__main__":
     i_num = 0
     n_epochs = 10
     batch_size = 50
-    train_X, train_y, test_X, test_y = load_mnist(True)
+    train_X, train_y, test_X, test_y = load_mnist()
     for i in range(n_epochs):
         count = 0
         for (start, end) in zip(range(0, len(train_y) - batch_size, batch_size),
