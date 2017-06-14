@@ -110,15 +110,20 @@ class NeuralNetwork(object):
 
         Params:
             loss: loss function (Default is categorical crossentropy)
-            solver: solver used to train the network
+            optimizer: optimizer used to train the network
         """
+        self.y_ = T.ivector()
+        self.x_ = T.dmatrix()
         self.loss_ = loss
         self.optimizer_ = optimizer
         self.layers = []
         self.params = []
         self.compiled_model_ = None
         self.model_out_ = None
+        self.cost_ = None
         self.compiled_predictor_ = None
+        self.learning_rate_ = theano.shared(value=0.05, borrow=True)
+        self.t_ = theano.shared(value=1, borrow=True)
 
     def add_layer(self, dim, activation=T.nnet.relu,
                   weight_init_scale=.01):
@@ -145,10 +150,9 @@ class NeuralNetwork(object):
         self.layers.append(Layer(dim, activation,
             weight_init_scale))
         self.params = self.params + self.layers[-1].params()
-
         return self
 
-    def get_updates(self):
+    def get_updates_func(self):
         """
         Returns the updates list for the specified optimizer
 
@@ -160,14 +164,14 @@ class NeuralNetwork(object):
             
             # TODO: need a better way of allowing the user to pick the learning
             # rate
-            alpha = theano.shared(value=0.01, borrow=True)
-            t = theano.shared(value=1, borrow=True)
-            gradients = T.grad(self.model_out_, wrt=self.params)
-            updates = [(p, p - alpha * g) for (p, g) in zip(self.params,
-                gradients)]
-            updates.append((alpha, alpha * np.sqrt(t/(t + 1))))
-            updates.append((t, t + 1))
-            return updates
+            def sgd():
+                updates = [(p, p - self.learning_rate_ * g) for (p, g) in
+                        zip(self.params, T.grad(self.cost_, wrt=self.params))]
+                updates.append((self.learning_rate_, self.learning_rate_ *\
+                                np.sqrt(self.t_/(self.t_ + 1))))
+                updates.append((self.t_, self.t_+1))
+                return updates
+            return sgd
         
         elif self.optimizer_ == Optimizer.LBFGS:
             # L-BFGS
@@ -182,26 +186,24 @@ class NeuralNetwork(object):
         """
         if len(self.layers) == 0:
             raise RuntimeError("Cannot compile model with 0 layers")
-        y = T.ivector()
-        x = T.dmatrix()
+        
 
         num_layers = len(self.layers)
-        first_layer = self.layers[0]
-        cur_layer = first_layer.activation(T.dot(x, first_layer.W) +
-                first_layer.b)
-        layer_output = x
+        self.model_out_ = self.x_
         for l in self.layers:
-            layer_output = l.activation(T.dot(layer_output, l.W) + l.b)
-        self.model_out_ = T.mean(self.loss_(layer_output, y))
+            self.model_out_ = l.activation(T.dot(self.model_out_, l.W) + l.b)
+        self.cost_ = T.mean(self.loss_(self.model_out_, self.y_))
 
-        self.compiled_model_ = theano.function(inputs=[x, y], 
-                                               outputs=self.model_out_,
-                                               updates=self.get_updates(),
+        updater = self.get_updates_func()
+        self.compiled_model_ = theano.function(inputs=[self.x_, self.y_], 
+                                               outputs=self.cost_,
+                                               updates=updater(),
                                                allow_input_downcast=True)
 
-        self.compiled_predictor_ = theano.function(inputs=[x],
-                                                   outputs=T.argmax(layer_output,
-                                                                    axis=1))
+        self.compiled_predictor_ = theano.function(inputs=[self.x_],
+                                                   outputs=T.argmax(self.model_out_,
+                                                                    axis=1),
+                                                   allow_input_downcast=True)
 
 
     def deep_copy(self):
@@ -264,7 +266,7 @@ class NeuralNetwork(object):
         Returns:
             Percent incorrect on the test set
         """
-        return np.mean(y == self.predict(x))
+        return np.mean(y != self.predict(x))
 
     def test_accuracy(self, x, y):
         """
@@ -351,7 +353,7 @@ pred_fn = theano.function(inputs=[x],
 
 if __name__ == "__main__":
 
-    n_hidden = 500
+    n_hidden = 450
 
     # Create neural network with SGD optimizer
     nn = NeuralNetwork(optimizer=Optimizer.SGD)
@@ -359,7 +361,8 @@ if __name__ == "__main__":
     # Build a three layer network
     nn.add_layer(dim=(784, n_hidden)).\
        add_layer(dim=(n_hidden, n_hidden)).\
-       add_layer(dim=(n_hidden, n_hidden),activation=T.nnet.softmax)
+       add_layer(dim=(n_hidden, n_hidden)).\
+       add_layer(dim=(n_hidden, 10),activation=T.nnet.softmax)
 
     # Compile network
     obj_fn = nn.compile()
@@ -368,16 +371,15 @@ if __name__ == "__main__":
     test_err = []
     iter_num = []
     i_num = 0
-    n_epochs = 5
-    batch_size = 100 
-    train_X, train_y, test_X, test_y = load_mnist()
+    n_epochs = 10
+    batch_size = 50
+    train_X, train_y, test_X, test_y = load_mnist(True)
     for i in range(n_epochs):
         count = 0
         for (start, end) in zip(range(0, len(train_y) - batch_size, batch_size),
                 range(batch_size, len(train_y), batch_size)):
             cost = nn.train(train_X[start:end,:],
                     train_y[start:end])
-        
         print("Epoc {} test accuracy: {}".format(i, nn.test_accuracy(test_X,
             test_y)))
 
