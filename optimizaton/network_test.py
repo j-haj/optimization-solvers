@@ -64,11 +64,12 @@ class Layer(object):
         self.weight_init_scale_ = weight_init_scale
         self.activation = activation
 
-        self.W = theano.shared(value=rng.normal(size=dim),
+        self.W = theano.shared(value=rng.normal(size=dim,
                                                 scale=self.weight_init_scale_),
                               borrow=True)
         self.b = theano.shared(value=self.weight_init_scale_, borrow=True)
 
+    # TODO: Possibly remove this function
     def eval(self, x):
         """
         Evaluates the layer.
@@ -116,6 +117,7 @@ class NeuralNetwork(object):
         self.layers = []
         self.params = []
         self.compiled_model_ = None
+        self.model_out_ = None
         self.compiled_predictor_ = None
 
     def add_layer(self, dim, activation=T.nnet.relu,
@@ -135,18 +137,18 @@ class NeuralNetwork(object):
         """
         # Check layer compaitability
         if len(self.layers) != 0:
-            if self.layers[-1].output_dim != input_dim:
+            if self.layers[-1].dim[1] != dim[0]:
                 raise ValueError(("Dimension mismatch - input dimension of"
                 "current layer must match output dimension of prior layer"))
 
         # Create layer object
-        self.layers.append(Layer(input_dim, output_dim, activation,
+        self.layers.append(Layer(dim, activation,
             weight_init_scale))
-        self.params += self.layers[-1].params
+        self.params = self.params + self.layers[-1].params()
 
         return self
 
-    def optimizer_(self):
+    def get_updates(self):
         """
         Returns the updates list for the specified optimizer
 
@@ -160,6 +162,7 @@ class NeuralNetwork(object):
             # rate
             alpha = theano.shared(value=0.01, borrow=True)
             t = theano.shared(value=1, borrow=True)
+            gradients = T.grad(self.model_out_, wrt=self.params)
             updates = [(p, p - alpha * g) for (p, g) in zip(self.params,
                 gradients)]
             updates.append((alpha, alpha * np.sqrt(t/(t + 1))))
@@ -184,21 +187,21 @@ class NeuralNetwork(object):
 
         num_layers = len(self.layers)
         first_layer = self.layers[0]
-        cur_layer = first_layer.activation(T.dot(first_layer.W.T, x) +
+        cur_layer = first_layer.activation(T.dot(x, first_layer.W) +
                 first_layer.b)
         layer_output = x
         for l in self.layers:
-            layer_output = l.activation(T.dot(l.W.T, layer_output) + l.b)
-        model_out = T.mean(self.loss_(layer_output, y))
+            layer_output = l.activation(T.dot(layer_output, l.W) + l.b)
+        self.model_out_ = T.mean(self.loss_(layer_output, y))
 
         self.compiled_model_ = theano.function(inputs=[x, y], 
-                                               outputs=model_out,
-                                               updates=self.optimizer_(),
+                                               outputs=self.model_out_,
+                                               updates=self.get_updates(),
                                                allow_input_downcast=True)
 
         self.compiled_predictor_ = theano.function(inputs=[x],
                                                    outputs=T.argmax(layer_output,
-                                                                    axis=1)
+                                                                    axis=1))
 
 
     def deep_copy(self):
@@ -250,7 +253,7 @@ class NeuralNetwork(object):
         """
         return self.compiled_predictor_(x)
 
-    def get_test_error(x, y):
+    def test_error(self, x, y):
         """
         Calculated the test error for the current model state
 
@@ -263,7 +266,7 @@ class NeuralNetwork(object):
         """
         return np.mean(y == self.predict(x))
 
-    def get_test_accuracy(x, y):
+    def test_accuracy(self, x, y):
         """
         Calculates the test accuracy for the current model state
 
@@ -274,7 +277,7 @@ class NeuralNetwork(object):
         Returns:
             Percent correct on the test set
         """
-        return 1 - self.get_test_error(x, y)
+        return 1 - self.test_error(x, y)
 
 # TODO: Remove this as more updates are made
 '''
@@ -330,12 +333,6 @@ def lbfgs(x, y, params, cost, B):
     # Update y and B
     return params
 
-def softmax(X):
-    e_x = T.exp(X - X.max(axis=1).dimshuffle(0, 'x'))
-    return e_x / e_x.sum(axis=1).dimshuffle(0, 'x')
-
-weight_scale = 0.01
-
 
 prediction = T.argmax(output, axis=1)
 loss = T.mean(T.nnet.categorical_crossentropy(output, y))
@@ -350,9 +347,6 @@ pred_fn = theano.function(inputs=[x],
                           outputs=prediction,
                           allow_input_downcast=True)
 
-
-batch_size = 10
-log_interval = len(train_y) / batch_size / 10
 '''
 
 if __name__ == "__main__":
@@ -374,7 +368,9 @@ if __name__ == "__main__":
     test_err = []
     iter_num = []
     i_num = 0
-    train_X, train_y, test_X, test_y = load_data()
+    n_epochs = 5
+    batch_size = 100 
+    train_X, train_y, test_X, test_y = load_mnist()
     for i in range(n_epochs):
         count = 0
         for (start, end) in zip(range(0, len(train_y) - batch_size, batch_size),
@@ -382,7 +378,7 @@ if __name__ == "__main__":
             cost = nn.train(train_X[start:end,:],
                     train_y[start:end])
         
-        print("Epoc {} test accuracy: {}".format(i, nn.test_error(test_X,
+        print("Epoc {} test accuracy: {}".format(i, nn.test_accuracy(test_X,
             test_y)))
 
     #plt.plot(iter_num, test_err)
