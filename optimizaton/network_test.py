@@ -11,6 +11,12 @@ class Optimizer(Enum):
     SGD = "SGD"
     LBFGS = "L-BFGS"
 
+def static_vars(**kwargs):
+    def decorate(func):
+        for k in kwargs:
+            setattr(func, k, kwargs[k])
+        return func
+    return decorate
 
 def load_mnist(shuffle=False):
     """
@@ -117,17 +123,47 @@ class NeuralNetwork(object):
             loss: loss function (Default is categorical crossentropy)
             optimizer: optimizer used to train the network
         """
+        # Labels
         self.y_ = T.ivector()
+
+        # Feature data
         self.x_ = T.dmatrix()
+
+        # Specified loss function
         self.loss_ = loss
+
+        # Optimizer enum holding the chosen optimizer
         self.optimizer_ = optimizer
+
+        # List of Layer objects
         self.layers = []
+
+        # Network parameters
         self.params = []
+
+        # Holds references to parameters used by the optimizer to keep them in
+        # memory
+        self.optimizer_params_ = None
+
+        # theano.function representing the neural network
         self.compiled_model_ = None
+
+        # theano.function for model ouput
         self.model_out_ = None
+
+        # theano.function for the cost function
         self.cost_ = None
+
+        # theano.function that is a deep copy of the cost function
+        self.copied_cost_ = None
+    
+        # theano.function used for predictions
         self.compiled_predictor_ = None
+
+        # learning rate used by the optimizers
         self.learning_rate_ = theano.shared(value=0.05, borrow=True)
+
+        # Tracks the number of iterations completed by the optimizer
         self.t_ = theano.shared(value=1, borrow=True)
 
     def add_layer(self, dim, activation=T.nnet.relu,
@@ -175,23 +211,93 @@ class NeuralNetwork(object):
                 updates.append((self.learning_rate_, self.learning_rate_ *\
                                 np.sqrt(self.t_/(self.t_ + 1))))
                 updates.append((self.t_, self.t_+1))
+                print("sgd")
                 return updates
             return sgd
         
         elif self.optimizer_ == Optimizer.LBFGS:
             # L-BFGS
-            pass
-        return None
+            self.copied_cost_ = self.cost_.deep_copy()
+            @static_vars(B=None, prior_gradient=None)
+            def lbfgs():
+                gradients = theano.gradient.jacobian(self.cost_, wrt=params)
+                self.optimizer_params_.["B"] = theano.shared(value=[np.identity(n=i.shape.eval()[0],
+                    m=i.shape.eval()[1], dtype=float) for i in gradients],
+                                  borrow=True)
+                self.optimizer_params_["prior_gradients"] = gradients
+                # Get line search direction
+                p = -T.dot(T.nlinalg.MatrixInverse(self.optimizer_params_["B"]), gradients)
 
+                # Perform line search
+                num_steps = 100
+                step_vals = [self.learning_rate_ * i for i in range(num_steps)]
+                best_step = None
+                best_cost = None
+                for step in step_vals:
+                    self.copied_cost_.params +=  step * p
+                    if best_step == None:
+                        best_step = step
+                        best_cost = self.copied_cost_(self.x_, self.y_)
+                    else:
+                        tmp_cost = self.copied_cost_(self.x_, self.y_)
+                        if tmp_cost < best_cost:
+                            best_step = step
+                            best_cost = tmp_cost
+                    self.copied_cost_.params -= step * p
+                sk = best_step * p
+                self.copied_cost_.params -= sk
+                updates = [(p, np) for (p, np) in zip(self.params, new_params)]
+                yk = T.grad(cost=self.cost_, wrt=self.params) - lbfgs.prior_gradient
+                lbfgs.B += T.dot(yk, yk.T) / T.dot(yk.T, sk) -\
+                        T.dot(T.dot(lbfgs.B, sk), T.dot(sk.T, B))/\
+                        T.dot(T.dot(sk.T, lbfgs.B), sk)
 
+                # Update y and B
+                return updates
+            return lbfgs
+    '''
+    def lbfgs(x, y, params, cost, B):
+        """
+        See https://en.wikipedia.org/wiki/Limited-memory_BFGS
+        for details on this algorithm. Algorithm taken from this resource
+        """
+        # Perform warm start if t < history_size
+        
+        gradients = theano.gradient.jacobian(cost, wrt=params)
+        if B is None:
+            B = theano.shared(value=[np.identity(n=i.shape.eval()[0],
+                m=i.shape.eval()[1], dtype=float) for i in gradients],
+                              name='B', borrow=True)
+            prior_gradients = gradients
+        # Get line search direction
+        p = -T.dot(T.nlinalg.MatrixInverse(B), gradients)
 
+        # Perform line search
+        step_size = 0.01
+        num_steps = 100
+        step_vals = [step_size * i for i in range(num_steps)]
+        obj_vals = []
+        for step in step_vals:
+            new_params = params.copy() + step * p
+            mod_obj = obj_fn.copy(swap={params: new_params})
+            obj_vals.append(mod_obj(x, y))
+        best_step = step_vals[obj_vals.index(min(obj_vals))]
+        sk = best_step * p
+        params = params + sk
+        yk = T.grad(cost=cost, wrt=params) - prior_gradient
+        B += T.dot(yk, yk.T) / T.dot(yk.T, sk) -\
+                T.dot(T.dot(B, sk), T.dot(sk.T, B))/\
+                T.dot(T.dot(sk.T, B), sk)
+
+        # Update y and B
+        return params
+    '''
     def compile(self):
         """
         Creates a Theano function object to store the model definition
         """
         if len(self.layers) == 0:
             raise RuntimeError("Cannot compile model with 0 layers")
-        
 
         num_layers = len(self.layers)
         self.model_out_ = self.x_
@@ -304,42 +410,6 @@ def sgd(cost, params, lr, step):
 history_size = 5
 B = None
 prior_gradients = None
-def lbfgs(x, y, params, cost, B):
-    """
-    See https://en.wikipedia.org/wiki/Limited-memory_BFGS
-    for details on this algorithm. Algorithm taken from this resource
-    """
-    # Perform warm start if t < history_size
-    
-    gradients = theano.gradient.jacobian(cost, wrt=params)
-    if B is None:
-        B = theano.shared(value=[np.identity(n=i.shape.eval()[0],
-            m=i.shape.eval()[1], dtype=float) for i in gradients],
-                          name='B', borrow=True)
-        prior_gradients = gradients
-    # Get line search direction
-    p = -T.dot(T.nlinalg.MatrixInverse(B), gradients)
-
-    # Perform line search
-    step_size = 0.01
-    num_steps = 100
-    step_vals = [step_size * i for i in range(num_steps)]
-    obj_vals = []
-    for step in step_vals:
-        new_params = params.copy() + step * p
-        mod_obj = obj_fn.copy(swap={params: new_params})
-        obj_vals.append(mod_obj(x, y))
-    best_step = step_vals[obj_vals.index(min(obj_vals))]
-    sk = best_step * p
-    params = params + sk
-    yk = T.grad(cost=cost, wrt=params) - prior_gradient
-    B += T.dot(yk, yk.T) / T.dot(yk.T, sk) -\
-            T.dot(T.dot(B, sk), T.dot(sk.T, B))/\
-            T.dot(T.dot(sk.T, B), sk)
-
-    # Update y and B
-    return params
-
 
 prediction = T.argmax(output, axis=1)
 loss = T.mean(T.nnet.categorical_crossentropy(output, y))
